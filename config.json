@@ -1,0 +1,12 @@
+{
+  "db_host": "localhost",
+    "db_port": 5432,
+  "db_user": "postgres",
+    "db_password": "postgres",
+    "db_name": "sma",
+  "app_server_port": "8081",
+  "provider_url" : "http://localhost:8080/realms/remiges-tech",
+  "keycloak_url" : "http://localhost:8080",
+  "keycloak_client_id" : "BSE",
+  "realm" : "remiges-tech"
+}
