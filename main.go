@@ -15,6 +15,7 @@ import (
 	"github.com/remiges-tech/alya/router"
 	"github.com/remiges-tech/alya/service"
 	"github.com/remiges-tech/alya/wscutils"
+	group "github.com/remiges-tech/idshield-client/groupservice"
 	user "github.com/remiges-tech/idshield-client/userservice"
 	"github.com/remiges-tech/logharbour/logharbour"
 )
@@ -123,7 +124,7 @@ func main() {
 	// userService.RegisterRoute(http.MethodPut, "/user/password/:id", user.SetPassword)
 	// userService.RegisterRoute(http.MethodPost, "/usernew", user.Usernew)
 	userService.RegisterRoute(http.MethodGet, "/userget", user.User_get)
-	// userService.RegisterRoute(http.MethodGet, "/users/list/:realm", user.FetchAllUsers)
+	userService.RegisterRoute(http.MethodGet, "/groupget", group.Group_get)
 	// userService.RegisterRoute(http.MethodPut, "/user/:id", user.Userupdate)
 	// userService.RegisterRoute(http.MethodDelete, "/user/:id", user.DeleteUserByID)
 

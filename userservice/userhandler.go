@@ -52,15 +52,28 @@ func User_get(c *gin.Context, s *service.Service) {
 	var users []*gocloak.User
 	var err error
 
+	// Authz_check():
+	isCapable := util.Authz_check()
+	if !isCapable {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("User_not_authorized_to_perform_this_action", nil)}))
+		lh.Debug0().Log("User_not_authorized_to_perform_this_action")
+		return
+	}
+
 	token, err := router.ExtractToken(c.GetHeader("Authorization")) // separate "Bearer_" word from token
 	lh.Log("token extracted from header")
 	if err != nil {
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, &token)}))
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "token")}))
 		lh.Debug0().Log(fmt.Sprintf("token_missing: %v", map[string]any{"error": err.Error()}))
 		return
 	}
 
 	realm, err := util.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("invalid_token_payload", &realm)}))
+		lh.Debug0().Log(fmt.Sprintf("invalid token payload: %v", map[string]any{"error": err.Error()}))
+		return
+	}
 	split := strings.Split(realm, "/")
 	realm = split[len(split)-1]
 
@@ -73,8 +86,7 @@ func User_get(c *gin.Context, s *service.Service) {
 	id := c.Query("id")
 	userName := c.Query("name")
 	if gocloak.NilOrEmpty(&id) && gocloak.NilOrEmpty(&userName) {
-		id, userName = "id", "userName"
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, &id), wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, &userName)}))
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "id", "name")}))
 		lh.Debug0().Log("id & name both are null")
 		return
 	}
@@ -93,7 +105,7 @@ func User_get(c *gin.Context, s *service.Service) {
 
 	user = users[0]
 
-	if err != nil {
+	if err != nil || len(users) == 0 {
 		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("user_not_found", &realm)}))
 		lh.Debug0().Log(fmt.Sprintf("user not found in given realm error: %v", map[string]any{"error": err.Error()}))
 		return

@@ -32,3 +32,7 @@ func ExtractClaimFromJwt(tokenString string, singleClaimName string) (string, er
 	fmt.Println("name:", name)
 	return name, nil
 }
+
+func Authz_check() bool {
+	return true
+}
