@@ -30,7 +30,7 @@ func Group_new(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
 		return
 	}
-	r, err := utils.ExtractClaimFromJwt(token, "iss")
+	r, err := utils.ExtractClaimFromToken(token, "iss")
 	if err != nil {
 		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
@@ -38,7 +38,7 @@ func Group_new(c *gin.Context, s *service.Service) {
 	}
 	parts := strings.Split(r, "/realms/")
 	realm := parts[1]
-	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
+	username, err := utils.ExtractClaimFromToken(token, "preferred_username")
 	if err != nil {
 		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
@@ -110,7 +110,7 @@ func Group_update(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
 		return
 	}
-	r, err := utils.ExtractClaimFromJwt(token, "iss")
+	r, err := utils.ExtractClaimFromToken(token, "iss")
 	if err != nil {
 		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
@@ -118,7 +118,7 @@ func Group_update(c *gin.Context, s *service.Service) {
 	}
 	parts := strings.Split(r, "/realms/")
 	realm := parts[1]
-	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
+	username, err := utils.ExtractClaimFromToken(token, "preferred_username")
 	if err != nil {
 		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
@@ -164,9 +164,9 @@ func Group_update(c *gin.Context, s *service.Service) {
 	groups, err := gcClient.GetGroups(c, token, realm, gocloak.GetGroupsParams{
 		Search: &g.ShortName,
 	})
-	if err != nil || len(groups) > 0 {
-		l.LogActivity("Error while getting group ID:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
+	if err != nil || len(groups) < 1 {
+		l.LogActivity("Error while getting group ID:", logharbour.DebugInfo{Variables: map[string]any{"Error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrWhileGettingInfo))
 		return
 	}
 	g.Attributes["longName"] = []string{g.LongName}
