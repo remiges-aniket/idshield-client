@@ -12,7 +12,7 @@
 "token_cache_failed": 108
 
 "Unauthorized" : 201
-"already_exists" : 202
+"User_already_exists" : 202
 "Realm_not_found": 203
 "Failed_to_create_Keycloak_role": 205
 "Failed_to_create_Keycloak_group": 206
@@ -20,3 +20,5 @@
 "Failed_to_load_dependence": 208
 "either_ID_or_Username_is_set_but_not_both": 209
 "token_expired": 210
+"userName_not_found": 211
+"User_already_exists_with_same_email": 212

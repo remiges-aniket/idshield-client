@@ -1,6 +1,8 @@
 package groupsvc
 
 import (
+	"strings"
+
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -22,7 +24,32 @@ func Group_new(c *gin.Context, s *service.Service) {
 	l := s.LogHarbour
 	l.Log("Starting execution of Group_new()")
 
-	isCapable, _ := utils.Authz_check()
+	token, err := router.ExtractToken(c.GetHeader("Authorization"))
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
+		return
+	}
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
+		return
+	}
+	parts := strings.Split(r, "/realms/")
+	realm := parts[1]
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
+	if err != nil {
+		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
+		return
+	}
+
+	isCapable, _ := utils.Authz_check(utils.OpReq{
+		User:      username,
+		CapNeeded: []string{"GroupCreate"},
+	}, false)
+
 	if !isCapable {
 		l.Log("Unauthorized user:")
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
@@ -51,19 +78,6 @@ func Group_new(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToLoadDependence))
 	}
 
-	realm, err := utils.GetRealm(c)
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
-		return
-	}
-
-	token, err := router.ExtractToken(c.GetHeader("Authorization"))
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
-		return
-	}
 	g.Attributes["longName"] = []string{g.LongName}
 
 	group := gocloak.Group{
@@ -75,7 +89,7 @@ func Group_new(c *gin.Context, s *service.Service) {
 	_, err = gcClient.CreateGroup(c, token, realm, group)
 	if err != nil {
 		l.LogActivity("Error while creating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		utils.GocloakErrorHandler(c, l, err)
+		wscutils.SendErrorResponse(c, &wscutils.Response{Data: err})
 		return
 	}
 
@@ -90,8 +104,32 @@ func Group_new(c *gin.Context, s *service.Service) {
 func Group_update(c *gin.Context, s *service.Service) {
 	l := s.LogHarbour
 	l.Log("Starting execution of Group_update() ")
+	token, err := router.ExtractToken(c.GetHeader("Authorization"))
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
+		return
+	}
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
+		return
+	}
+	parts := strings.Split(r, "/realms/")
+	realm := parts[1]
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
+	if err != nil {
+		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
+		return
+	}
 
-	isCapable, _ := utils.Authz_check()
+	isCapable, _ := utils.Authz_check(utils.OpReq{
+		User:      username,
+		CapNeeded: []string{"GroupUpdate"},
+	}, false)
+
 	if !isCapable {
 		l.Log("Unauthorized user:")
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
@@ -101,7 +139,7 @@ func Group_update(c *gin.Context, s *service.Service) {
 	var g group
 
 	// Unmarshal JSON request into group struct
-	err := wscutils.BindJSON(c, &g)
+	err = wscutils.BindJSON(c, &g)
 	if err != nil {
 		l.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(wscutils.ErrcodeInvalidJson))
@@ -123,19 +161,10 @@ func Group_update(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToLoadDependence))
 	}
 
-	realm := s.Dependencies["realm"].(string)
-
-	token, err := router.ExtractToken(c.GetHeader("Authorization"))
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
-		return
-	}
-
 	groups, err := gcClient.GetGroups(c, token, realm, gocloak.GetGroupsParams{
 		Search: &g.ShortName,
 	})
-	if err != nil {
+	if err != nil || len(groups) > 0 {
 		l.LogActivity("Error while getting group ID:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
 		return
@@ -151,7 +180,7 @@ func Group_update(c *gin.Context, s *service.Service) {
 	err = gcClient.UpdateGroup(c, token, realm, UpdateGroupParm)
 	if err != nil {
 		l.LogActivity("Error while creating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		utils.GocloakErrorHandler(c, l, err)
+		wscutils.SendErrorResponse(c, &wscutils.Response{Data: err})
 		return
 	}
 

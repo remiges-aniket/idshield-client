@@ -15,6 +15,7 @@ import (
 	"github.com/remiges-tech/alya/wscutils"
 	"github.com/remiges-tech/idshield/webServices/groupsvc"
 	"github.com/remiges-tech/idshield/webServices/usersvc"
+	"github.com/remiges-tech/idshield/webServices/capsvc"
 	"github.com/remiges-tech/logharbour/logharbour"
 )
 
@@ -105,6 +106,8 @@ func main() {
 	s.RegisterRoute(http.MethodPost, "/userdeactivate", usersvc.User_deactivate)
 	s.RegisterRoute(http.MethodPost, "/groupnew", groupsvc.Group_new)
 	s.RegisterRoute(http.MethodPost, "/groupupdate", groupsvc.Group_update)
+
+	s.RegisterRoute(http.MethodPost, "/capusergrant", capsvc.Capuser_grant)
 
 	// Start the service
 	if err := r.Run(":" + appConfig.AppServerPort); err != nil {

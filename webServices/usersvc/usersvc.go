@@ -3,6 +3,7 @@ package usersvc
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/gin-gonic/gin"
@@ -34,8 +35,32 @@ type userActivity struct {
 func User_new(c *gin.Context, s *service.Service) {
 	l := s.LogHarbour
 	l.Log("Starting execution of User_new()")
+	token, err := router.ExtractToken(c.GetHeader("Authorization"))
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
+		return
+	}
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
+		return
+	}
+	parts := strings.Split(r, "/realms/")
+	realm := parts[1]
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
+	if err != nil {
+		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
+		return
+	}
 
-	isCapable, _ := utils.Authz_check()
+	isCapable, _ := utils.Authz_check(utils.OpReq{
+		User:      username,
+		CapNeeded: []string{"UserCreate"},
+	}, false)
+
 	if !isCapable {
 		l.Log("Unauthorized user:")
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
@@ -45,7 +70,7 @@ func User_new(c *gin.Context, s *service.Service) {
 	var u user
 
 	// Unmarshal JSON request into user struct
-	err := wscutils.BindJSON(c, &u)
+	err = wscutils.BindJSON(c, &u)
 	if err != nil {
 		l.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
 		return
@@ -59,19 +84,6 @@ func User_new(c *gin.Context, s *service.Service) {
 		return
 	}
 
-	realm, err := utils.GetRealm(c)
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
-		return
-	}
-
-	token, err := router.ExtractToken(c.GetHeader("Authorization"))
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
-		return
-	}
 	keycloakUser := gocloak.User{
 		Username:   &u.Username,
 		FirstName:  &u.FirstName,
@@ -92,8 +104,28 @@ func User_new(c *gin.Context, s *service.Service) {
 	ID, err := gcClient.CreateUser(c, token, realm, keycloakUser)
 	if err != nil {
 		l.LogActivity("Error while creating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		utils.GocloakErrorHandler(c, l, err)
-		return
+		switch err.Error() {
+		case utils.ErrHTTPUnauthorized:
+			s.LogHarbour.Debug0().LogDebug("Unauthorized error occurred: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
+			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
+			return
+		case utils.ErrHTTPUserAlreadyExist:
+			s.LogHarbour.Debug0().LogDebug("User already exists error: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
+			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrHTTPUserAlreadyExist))
+			return
+		case utils.ErrHTTPRealmNotFound:
+			s.LogHarbour.Debug0().LogDebug("Realm not found error: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
+			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
+			return
+		case utils.ErrHTTPSameEmail:
+			s.LogHarbour.Debug0().LogDebug("User exists with same email: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
+			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrSameEMail))
+			return
+		default:
+			s.LogHarbour.Debug0().LogDebug("Unknown error occurred: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
+			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(wscutils.ErrcodeUnknown))
+			return
+		}
 	}
 
 	// Send success response
@@ -105,8 +137,32 @@ func User_new(c *gin.Context, s *service.Service) {
 func User_activate(c *gin.Context, s *service.Service) {
 	l := s.LogHarbour
 	l.Log("Starting execution of User_activate()")
+	token, err := router.ExtractToken(c.GetHeader("Authorization"))
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
+		return
+	}
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
+		return
+	}
+	parts := strings.Split(r, "/realms/")
+	realm := parts[1]
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
+	if err != nil {
+		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
+		return
+	}
 
-	isCapable, _ := utils.Authz_check()
+	isCapable, _ := utils.Authz_check(utils.OpReq{
+		User:      username,
+		CapNeeded: []string{"UserActivate"},
+	}, false)
+
 	if !isCapable {
 		l.Log("Unauthorized user:")
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
@@ -114,7 +170,7 @@ func User_activate(c *gin.Context, s *service.Service) {
 	}
 
 	var u userActivity
-	err := wscutils.BindJSON(c, &u)
+	err = wscutils.BindJSON(c, &u)
 	if err != nil {
 		l.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
 		return
@@ -127,20 +183,6 @@ func User_activate(c *gin.Context, s *service.Service) {
 		return
 	}
 
-	realm, err := utils.GetRealm(c)
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
-		return
-	}
-
-	token, err := router.ExtractToken(c.GetHeader("Authorization"))
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
-		return
-	}
-
 	// Extracting the GoCloak client from the service dependencies
 	gcClient, ok := s.Dependencies["gocloak"].(*gocloak.GoCloak)
 	if !ok {
@@ -154,7 +196,7 @@ func User_activate(c *gin.Context, s *service.Service) {
 		users, err := gcClient.GetUsers(c, token, realm, gocloak.GetUsersParams{
 			Username: &u.Username,
 		})
-		if err != nil {
+		if err != nil || len(users) > 0 {
 			l.Log("Error while getting user info")
 			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
 			return
@@ -175,7 +217,7 @@ func User_activate(c *gin.Context, s *service.Service) {
 	err = gcClient.UpdateUser(c, token, realm, keycloakUser)
 	if err != nil {
 		l.LogActivity("Error while activating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		utils.GocloakErrorHandler(c, l, err)
+		wscutils.SendErrorResponse(c, &wscutils.Response{Status: "400", Data: err})
 		return
 	}
 
@@ -188,15 +230,39 @@ func User_activate(c *gin.Context, s *service.Service) {
 func User_deactivate(c *gin.Context, s *service.Service) {
 	l := s.LogHarbour
 	l.Log("Starting execution of User_deactivate()")
+	token, err := router.ExtractToken(c.GetHeader("Authorization"))
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
+		return
+	}
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
+		return
+	}
+	parts := strings.Split(r, "/realms/")
+	realm := parts[1]
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
+	if err != nil {
+		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
+		return
+	}
 
-	isCapable, _ := utils.Authz_check()
+	isCapable, _ := utils.Authz_check(utils.OpReq{
+		User:      username,
+		CapNeeded: []string{"UserDeactivate"},
+	}, false)
+
 	if !isCapable {
 		l.Log("Unauthorized user:")
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
 		return
 	}
 	var u userActivity
-	err := wscutils.BindJSON(c, &u)
+	err = wscutils.BindJSON(c, &u)
 	if err != nil {
 		l.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
 		return
@@ -206,20 +272,6 @@ func User_deactivate(c *gin.Context, s *service.Service) {
 	if err != nil {
 		l.Debug0().LogDebug("either ID or Username is set, but not both", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse("either ID or Username is set, but not both"))
-		return
-	}
-
-	realm, err := utils.GetRealm(c)
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
-		return
-	}
-
-	token, err := router.ExtractToken(c.GetHeader("Authorization"))
-	if err != nil {
-		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
 		return
 	}
 
@@ -235,7 +287,7 @@ func User_deactivate(c *gin.Context, s *service.Service) {
 		users, err := gcClient.GetUsers(c, token, realm, gocloak.GetUsersParams{
 			Username: &u.Username,
 		})
-		if err != nil {
+		if err != nil || len(users) > 0  {
 			l.Log("Error while getting user info")
 			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
 			return
@@ -256,7 +308,7 @@ func User_deactivate(c *gin.Context, s *service.Service) {
 	err = gcClient.UpdateUser(c, token, realm, keycloakUser)
 	if err != nil {
 		l.LogActivity("Error while activating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		utils.GocloakErrorHandler(c, l, err)
+		wscutils.SendErrorResponse(c, &wscutils.Response{Data: err})
 		return
 	}
 
