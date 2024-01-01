@@ -1,8 +1,6 @@
 package groupsvc
 
 import (
-	"strings"
-
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -47,7 +45,11 @@ func Group_new(c *gin.Context, s *service.Service) {
 	}
 
 	// Extracting the GoCloak client from the service dependencies
-	gcClient := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+	gcClient, ok := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+	if !ok {
+		l.Log("Failed to convert the dependency to *gocloak.GoCloak")
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToLoadDependence))
+	}
 
 	realm, err := utils.GetRealm(c)
 	if err != nil {
@@ -73,25 +75,8 @@ func Group_new(c *gin.Context, s *service.Service) {
 	_, err = gcClient.CreateGroup(c, token, realm, group)
 	if err != nil {
 		l.LogActivity("Error while creating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		errCode := strings.Split(err.Error(), ":")
-		switch errCode[0] {
-		case utils.ErrHTTPUnauthorized:
-			l.Debug0().LogDebug("Unauthorized error occurred: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
-			return
-		case utils.ErrHTTPAlreadyExist:
-			l.Debug0().LogDebug("Group already exists error: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrAlreadyExist))
-			return
-		case utils.ErrHTTPRealmNotFound:
-			l.Debug0().LogDebug("Realm not found error: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
-			return
-		default:
-			l.Debug0().LogDebug("Unknown error occurred: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnknown))
-			return
-		}
+		utils.GocloakErrorHandler(c, l, err)
+		return
 	}
 
 	// Send success response
@@ -132,7 +117,11 @@ func Group_update(c *gin.Context, s *service.Service) {
 	}
 
 	// Extracting the GoCloak client from the service dependencies
-	gcClient := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+	gcClient, ok := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+	if !ok {
+		l.Log("Failed to convert the dependency to *gocloak.GoCloak")
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToLoadDependence))
+	}
 
 	realm := s.Dependencies["realm"].(string)
 
@@ -146,7 +135,6 @@ func Group_update(c *gin.Context, s *service.Service) {
 	groups, err := gcClient.GetGroups(c, token, realm, gocloak.GetGroupsParams{
 		Search: &g.ShortName,
 	})
-
 	if err != nil {
 		l.LogActivity("Error while getting group ID:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
@@ -163,25 +151,8 @@ func Group_update(c *gin.Context, s *service.Service) {
 	err = gcClient.UpdateGroup(c, token, realm, UpdateGroupParm)
 	if err != nil {
 		l.LogActivity("Error while creating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		errCode := strings.Split(err.Error(), ":")
-		switch errCode[0] {
-		case utils.ErrHTTPUnauthorized:
-			l.Debug0().LogDebug("Unauthorized error occurred: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
-			return
-		case utils.ErrHTTPAlreadyExist:
-			l.Debug0().LogDebug("Group already exists error: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrAlreadyExist))
-			return
-		case utils.ErrHTTPRealmNotFound:
-			l.Debug0().LogDebug("Realm not found error: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
-			return
-		default:
-			l.Debug0().LogDebug("Unknown error occurred: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnknown))
-			return
-		}
+		utils.GocloakErrorHandler(c, l, err)
+		return
 	}
 
 	// Send success response
