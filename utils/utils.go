@@ -7,6 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/remiges-tech/alya/router"
+	"github.com/remiges-tech/alya/wscutils"
+	"github.com/remiges-tech/logharbour/logharbour"
 )
 
 const (
@@ -14,16 +16,18 @@ const (
 	ErrTokenVerificationFailed = "token_verification_failed"
 	ErrUnauthorized            = "Unauthorized"
 
-	ErrInvalidJSON      = "invalid_json"
-	ErrAlreadyExist = "already_exists"
-	ErrRealmNotFound    = "Realm_not_found"
-	ErrUnknown          = "unknown"
+	ErrInvalidJSON   = "invalid_json"
+	ErrAlreadyExist  = "already_exists"
+	ErrRealmNotFound = "Realm_not_found"
+	ErrUnknown       = "unknown"
 
-	ErrHTTPUnauthorized     = "401 Unauthorized"
-	ErrHTTPAlreadyExist = "409 Conflict"
-	ErrHTTPRealmNotFound    = "404 Not Found"
+	ErrHTTPUnauthorized  = "401 Unauthorized"
+	ErrHTTPAlreadyExist  = "409 Conflict"
+	ErrHTTPNotFound = "404 Not Found"
 
-	ErrFailedToGetDependence = "Failed_to_get_dependence"
+	ErrFailedToLoadDependence            = "Failed_to_load_dependence"
+	ErrEitherIDOrUsernameIsSetButNotBoth = "either_ID_or_Username_is_set_but_not_both"
+	ERRTokenExpired                      = "token_expired"
 )
 
 // Capabilities representing user capabilities.
@@ -39,13 +43,13 @@ type Caplist struct {
 
 type OpReq struct {
 	User      string            `json:"user"`
-	CapNeeded []string          `json:"capneeded"`
+	CapNeeded []string          `json:"capNeeded"`
 	Scope     map[string]string `json:"scope"`
 	Limit     map[string]string `json:"limit"`
 }
 
 // Extract roles from the claims
-func extractUserCapabilities(claims jwt.MapClaims) ([]string, error) {
+func ExtractUserCapabilities(claims jwt.MapClaims) ([]string, error) {
 	var capabilities []string
 	if realmAccess, ok := claims["userCapabilities"].(map[string]interface{}); ok {
 		if capabilitiesClaims, ok := realmAccess["userCapabilities"].([]interface{}); ok {
@@ -97,4 +101,23 @@ func extractRealmFromIssuer(issuer string) string {
 func Authz_check() (bool, []string) {
 	var caplist []string
 	return true, caplist
+}
+
+func GocloakErrorHandler(c *gin.Context, l *logharbour.Logger, err error) {
+	errCode := strings.Split(err.Error(), ":")
+	switch errCode[0] {
+	case ErrHTTPUnauthorized:
+		l.Debug0().LogDebug("Token expired: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(ErrUnauthorized))
+	case ErrHTTPAlreadyExist:
+		l.Debug0().LogDebug("User already exists error: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(ErrAlreadyExist))
+	case ErrHTTPNotFound:
+		l.Debug0().LogDebug("Not found error: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(ErrRealmNotFound))
+	default:
+		l.Debug0().LogDebug("Unknown error occurred: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(ErrUnknown))
+	}
+
 }
