@@ -1,8 +1,8 @@
 package usersvc
 
 import (
+	"errors"
 	"strconv"
-	"strings"
 
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/gin-gonic/gin"
@@ -25,6 +25,11 @@ type user struct {
 	Enabled    bool                `json:"enabled" validate:"required"`
 }
 
+type userActivity struct {
+	ID       string `json:"id,omitempty"`
+	Username string `json:"username,omitempty"`
+}
+
 // HandleCreateUserRequest is creating a new user in keycloak.
 func User_new(c *gin.Context, s *service.Service) {
 	l := s.LogHarbour
@@ -43,7 +48,6 @@ func User_new(c *gin.Context, s *service.Service) {
 	err := wscutils.BindJSON(c, &u)
 	if err != nil {
 		l.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
-		// wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(wscutils.ErrcodeInvalidJson))
 		return
 	}
 
@@ -58,7 +62,7 @@ func User_new(c *gin.Context, s *service.Service) {
 	realm, err := utils.GetRealm(c)
 	if err != nil {
 		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
 		return
 	}
 
@@ -78,40 +82,188 @@ func User_new(c *gin.Context, s *service.Service) {
 	}
 
 	// Extracting the GoCloak client from the service dependencies
-	gcClient, ok := s.Dependencies["goclock"].(*gocloak.GoCloak)
+	gcClient, ok := s.Dependencies["gocloak"].(*gocloak.GoCloak)
 	if !ok {
-		l.Log("Failed to convert the dependency to *gocloak.GoCloak")
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToGetDependence))
+		l.Log("Failed to load the dependency to *gocloak.GoCloak")
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToLoadDependence))
+		return
 	}
 	// CreateUser creates the given user in the given realm and returns it's userID
 	ID, err := gcClient.CreateUser(c, token, realm, keycloakUser)
 	if err != nil {
 		l.LogActivity("Error while creating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		errCode := strings.Split(err.Error(), ":")
-		switch errCode[0] {
-		case utils.ErrHTTPUnauthorized:
-			l.Debug0().LogDebug("Unauthorized error occurred: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
-			return
-		case utils.ErrHTTPAlreadyExist:
-			l.Debug0().LogDebug("User already exists error: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrAlreadyExist))
-			return
-		case utils.ErrHTTPRealmNotFound:
-			l.Debug0().LogDebug("Realm not found error: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
-			return
-		default:
-			l.Debug0().LogDebug("Unknown error occurred: ", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnknown))
-			return
-		}
+		utils.GocloakErrorHandler(c, l, err)
+		return
 	}
 
 	// Send success response
 	wscutils.SendSuccessResponse(c, &wscutils.Response{Status: wscutils.SuccessStatus, Data: ID})
 
 	l.Log("Finished execution of User_new()")
+}
+
+func User_activate(c *gin.Context, s *service.Service) {
+	l := s.LogHarbour
+	l.Log("Starting execution of User_activate()")
+
+	isCapable, _ := utils.Authz_check()
+	if !isCapable {
+		l.Log("Unauthorized user:")
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
+		return
+	}
+
+	var u userActivity
+	err := wscutils.BindJSON(c, &u)
+	if err != nil {
+		l.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
+		return
+	}
+
+	err = u.CustomValidate()
+	if err != nil {
+		l.Debug0().LogDebug("either ID or Username is set, but not both", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrEitherIDOrUsernameIsSetButNotBoth))
+		return
+	}
+
+	realm, err := utils.GetRealm(c)
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
+		return
+	}
+
+	token, err := router.ExtractToken(c.GetHeader("Authorization"))
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
+		return
+	}
+
+	// Extracting the GoCloak client from the service dependencies
+	gcClient, ok := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+	if !ok {
+		l.Log("Failed to convert the dependency to *gocloak.GoCloak")
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToLoadDependence))
+		return
+	}
+
+	var keycloakUser gocloak.User
+	if u.ID == "" {
+		users, err := gcClient.GetUsers(c, token, realm, gocloak.GetUsersParams{
+			Username: &u.Username,
+		})
+		if err != nil {
+			l.Log("Error while getting user info")
+			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
+			return
+		}
+		id := users[0].ID
+		keycloakUser = gocloak.User{
+			ID:       id,
+			Username: &u.Username,
+			Enabled:  gocloak.BoolP(true),
+		}
+	} else {
+		keycloakUser = gocloak.User{
+			ID:       &u.ID,
+			Username: &u.Username,
+			Enabled:  gocloak.BoolP(true),
+		}
+	}
+	err = gcClient.UpdateUser(c, token, realm, keycloakUser)
+	if err != nil {
+		l.LogActivity("Error while activating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		utils.GocloakErrorHandler(c, l, err)
+		return
+	}
+
+	// Send success response
+	wscutils.SendSuccessResponse(c, &wscutils.Response{Status: wscutils.SuccessStatus})
+
+	l.Log("Finished execution of User_activate()")
+}
+
+func User_deactivate(c *gin.Context, s *service.Service) {
+	l := s.LogHarbour
+	l.Log("Starting execution of User_deactivate()")
+
+	isCapable, _ := utils.Authz_check()
+	if !isCapable {
+		l.Log("Unauthorized user:")
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
+		return
+	}
+	var u userActivity
+	err := wscutils.BindJSON(c, &u)
+	if err != nil {
+		l.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
+		return
+	}
+
+	err = u.CustomValidate()
+	if err != nil {
+		l.Debug0().LogDebug("either ID or Username is set, but not both", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse("either ID or Username is set, but not both"))
+		return
+	}
+
+	realm, err := utils.GetRealm(c)
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
+		return
+	}
+
+	token, err := router.ExtractToken(c.GetHeader("Authorization"))
+	if err != nil {
+		l.Debug0().LogDebug("Missing or incorrect Authorization header format:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
+		return
+	}
+
+	// Extracting the GoCloak client from the service dependencies
+	gcClient, ok := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+	if !ok {
+		l.Log("Failed to convert the dependency to *gocloak.GoCloak")
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToLoadDependence))
+	}
+
+	var keycloakUser gocloak.User
+	if u.ID == "" {
+		users, err := gcClient.GetUsers(c, token, realm, gocloak.GetUsersParams{
+			Username: &u.Username,
+		})
+		if err != nil {
+			l.Log("Error while getting user info")
+			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
+			return
+		}
+		id := users[0].ID
+		keycloakUser = gocloak.User{
+			ID:       id,
+			Username: &u.Username,
+			Enabled:  gocloak.BoolP(false),
+		}
+	} else {
+		keycloakUser = gocloak.User{
+			ID:       &u.ID,
+			Username: &u.Username,
+			Enabled:  gocloak.BoolP(false),
+		}
+	}
+	err = gcClient.UpdateUser(c, token, realm, keycloakUser)
+	if err != nil {
+		l.LogActivity("Error while activating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
+		utils.GocloakErrorHandler(c, l, err)
+		return
+	}
+
+	// Send success response
+	wscutils.SendSuccessResponse(c, &wscutils.Response{Status: wscutils.SuccessStatus})
+
+	l.Log("Finished execution of User_activate()")
 }
 
 // validateCreateUser performs validation for the createUserRequest.
@@ -155,4 +307,15 @@ func (u *user) getValsForUser(err validator.FieldError) []string {
 	}
 
 	return vals
+}
+
+// Validate checks if either ID or Username is set, but not both.
+func (u *userActivity) CustomValidate() error {
+	if u.ID != "" && u.Username != "" {
+		return errors.New("both ID and Username cannot be set")
+	}
+	if u.ID == "" && u.Username == "" {
+		return errors.New("either ID or Username must be set")
+	}
+	return nil
 }
