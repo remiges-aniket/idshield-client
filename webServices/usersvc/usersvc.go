@@ -2,8 +2,10 @@ package usersvc
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/gin-gonic/gin"
@@ -12,6 +14,7 @@ import (
 	"github.com/remiges-tech/alya/router"
 	"github.com/remiges-tech/alya/service"
 	"github.com/remiges-tech/alya/wscutils"
+	"github.com/remiges-tech/idshield/types"
 	"github.com/remiges-tech/idshield/utils"
 	"github.com/remiges-tech/logharbour/logharbour"
 )
@@ -24,6 +27,18 @@ type user struct {
 	LastName   string              `json:"lastName"`
 	Attributes map[string][]string `json:"attributes"`
 	Enabled    bool                `json:"enabled" validate:"required"`
+}
+
+type UserResponse struct {
+	Id            *string              `json:"id,omitempty"`
+	Username      *string              `json:"username,omitempty"`
+	Email         *string              `json:"email,omitempty"`
+	FirstName     *string              `json:"firstName,omitempty"`
+	LastName      *string              `json:"lastName,omitempty"`
+	EmailVerified *bool                `json:"emailVerified,omitempty"`
+	Enabled       *bool                `json:"enabled,omitempty" validate:"required"`
+	Attributes    *map[string][]string `json:"attributes,omitempty"`
+	CreatedAt     time.Time            `json:"createdat,omitempty"`
 }
 
 type userActivity struct {
@@ -41,7 +56,7 @@ func User_new(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
 		return
 	}
-	r, err := utils.ExtractClaimFromToken(token, "iss")
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
 	if err != nil {
 		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
@@ -49,14 +64,14 @@ func User_new(c *gin.Context, s *service.Service) {
 	}
 	parts := strings.Split(r, "/realms/")
 	realm := parts[1]
-	username, err := utils.ExtractClaimFromToken(token, "preferred_username")
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
 	if err != nil {
 		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
 		return
 	}
 
-	isCapable, _ := utils.Authz_check(utils.OpReq{
+	isCapable, _ := utils.Authz_check(types.OpReq{
 		User:      username,
 		CapNeeded: []string{"UserCreate"},
 	}, false)
@@ -134,6 +149,95 @@ func User_new(c *gin.Context, s *service.Service) {
 	l.Log("Finished execution of User_new()")
 }
 
+// User_get: handles the GET /userget request, accept id or username as exact match if found will return else user_not_found
+func User_get(c *gin.Context, s *service.Service) {
+	lh := s.LogHarbour
+	lh.Log("User_get request received")
+	client := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+	params := gocloak.GetUsersParams{}
+
+	var user *gocloak.User
+	var users []*gocloak.User
+	exactMatch := true
+
+	token, err := router.ExtractToken(c.GetHeader("Authorization")) // separate "Bearer_" word from token
+	lh.Log("token extracted from header:" + token)
+	if err != nil {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "token")}))
+		lh.Debug0().Log(fmt.Sprintf("token_missing: %v", map[string]any{"error": err.Error()}))
+		return
+	}
+
+	reqUserName, _ := utils.ExtractClaimFromJwt(token, "preferred_username")
+
+	// Authz_check():
+	isCapable, _ := utils.Authz_check(types.OpReq{User: reqUserName, CapNeeded: []string{"devloper", "admin"}}, false)
+	if !isCapable {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("User_not_authorized_to_perform_this_action", nil)}))
+		lh.Debug0().Log("User_not_authorized_to_perform_this_action")
+		return
+	}
+
+	realm, err := utils.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("invalid_token_payload", &realm)}))
+		lh.Debug0().Log(fmt.Sprintf("invalid token payload: %v", map[string]any{"error": err.Error()}))
+		return
+	}
+	split := strings.Split(realm, "/")
+	realm = split[len(split)-1]
+
+	lh.Log(fmt.Sprintf("User_get realm parsed: %v", map[string]any{"realm": realm}))
+	if gocloak.NilOrEmpty(&realm) {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("realm_not_found", &realm)}))
+		lh.Debug0().Log(fmt.Sprintf("realm_not_found: %v", map[string]any{"realm": realm}))
+		return
+	}
+	id := c.Query("id")
+	userName := c.Query("name")
+	if gocloak.NilOrEmpty(&id) && gocloak.NilOrEmpty(&userName) {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "id", "name")}))
+		lh.Debug0().Log("id & name both are null")
+		return
+	}
+
+	// step 4: process the request
+	if !gocloak.NilOrEmpty(&id) {
+		user, err = client.GetUserByID(c, token, realm, id)
+		lh.Log("GetUserByID() request received")
+		users = append(users, user)
+	} else if !gocloak.NilOrEmpty(&userName) {
+		params.Username = &userName
+		params.Exact = &exactMatch
+		users, err = client.GetUsers(c, token, realm, params)
+		lh.Log("GetUsers() by name param request received")
+	}
+
+	if err != nil || len(users) == 0 {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("user_not_found", &realm)}))
+		lh.Debug0().Log(fmt.Sprintf("user not found in given realm: %v", map[string]any{"realm": realm}))
+		return
+	}
+	user = users[0]
+
+	// setting response fields
+	userResp := UserResponse{
+		Id:            user.ID,
+		Username:      user.Username,
+		Email:         user.Email,
+		FirstName:     user.FirstName,
+		LastName:      user.LastName,
+		EmailVerified: user.EmailVerified,
+		Enabled:       user.Enabled,
+		Attributes:    user.Attributes,
+		CreatedAt:     utils.UnixMilliToTimestamp(*user.CreatedTimestamp),
+	}
+
+	// step 5: if there are no errors, send success response
+	lh.Log(fmt.Sprintf("User found: %v", map[string]any{"user": userResp}))
+	wscutils.SendSuccessResponse(c, wscutils.NewSuccessResponse(userResp))
+}
+
 func User_activate(c *gin.Context, s *service.Service) {
 	l := s.LogHarbour
 	l.Log("Starting execution of User_activate()")
@@ -143,7 +247,7 @@ func User_activate(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
 		return
 	}
-	r, err := utils.ExtractClaimFromToken(token, "iss")
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
 	if err != nil {
 		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
@@ -151,14 +255,14 @@ func User_activate(c *gin.Context, s *service.Service) {
 	}
 	parts := strings.Split(r, "/realms/")
 	realm := parts[1]
-	username, err := utils.ExtractClaimFromToken(token, "preferred_username")
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
 	if err != nil {
 		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
 		return
 	}
 
-	isCapable, _ := utils.Authz_check(utils.OpReq{
+	isCapable, _ := utils.Authz_check(types.OpReq{
 		User:      username,
 		CapNeeded: []string{"UserActivate"},
 	}, false)
@@ -236,7 +340,7 @@ func User_deactivate(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
 		return
 	}
-	r, err := utils.ExtractClaimFromToken(token, "iss")
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
 	if err != nil {
 		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
@@ -244,14 +348,14 @@ func User_deactivate(c *gin.Context, s *service.Service) {
 	}
 	parts := strings.Split(r, "/realms/")
 	realm := parts[1]
-	username, err := utils.ExtractClaimFromToken(token, "preferred_username")
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
 	if err != nil {
 		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
 		return
 	}
 
-	isCapable, _ := utils.Authz_check(utils.OpReq{
+	isCapable, _ := utils.Authz_check(types.OpReq{
 		User:      username,
 		CapNeeded: []string{"UserDeactivate"},
 	}, false)

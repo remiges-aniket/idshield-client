@@ -22,3 +22,8 @@
 "token_expired": 210
 "userName_not_found": 211
 "User_already_exists_with_same_email": 212
+
+"user_not_found": 109
+"operation_failed": 110
+"User_not_authorized_to_perform_this_action" : 111
+"invalid_token_payload": 112
