@@ -2,15 +2,17 @@ package utils
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/remiges-tech/idshield/types"
 )
 
 const (
 	ErrTokenMissing            = "token_missing"
 	ErrTokenVerificationFailed = "token_verification_failed"
 	ErrUnauthorized            = "Unauthorized"
-	ErrWhileGettingInfo	= "Error_while_getting_info"
+	ErrWhileGettingInfo        = "Error_while_getting_info"
 
 	ErrInvalidJSON   = "invalid_json"
 	ErrAlreadyExist  = "User_already_exists"
@@ -29,25 +31,8 @@ const (
 	ErrUserNotFound                      = "userName_not_found"
 )
 
-// Capabilities representing user capabilities.
-type Capabilities struct {
-	Caplist []Caplist `json:"caplist"`
-}
-
-type Caplist struct {
-	Cap   string   `json:"cap"`
-	Scope []string `json:"scope"`
-	Limit []string `json:"limit"`
-}
-
-type OpReq struct {
-	User      string            `json:"user"`
-	CapNeeded []string          `json:"capNeeded"`
-	Scope     map[string]string `json:"scope"`
-	Limit     map[string]string `json:"limit"`
-}
-
-func ExtractClaimFromToken(tokenString string, singleClaimName string) (string, error) {
+// ExtractClaimFromJwt: this will extract the provided singleClaimName as key from the jwt token and return its value as a string
+func ExtractClaimFromJwt(tokenString string, singleClaimName string) (string, error) {
 	var name string
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
@@ -65,7 +50,13 @@ func ExtractClaimFromToken(tokenString string, singleClaimName string) (string, 
 	return name, nil
 }
 
-func Authz_check(op OpReq, trace bool) (bool, []string) {
+func Authz_check(op types.OpReq, trace bool) (bool, []string) {
 	var caplist []string
 	return true, caplist
+}
+
+// UnixMilliToTimestamp: will return the unixmilli time (int64) to time.Time using time package
+func UnixMilliToTimestamp(unix int64) time.Time {
+	tm := time.UnixMilli(unix)
+	return tm
 }

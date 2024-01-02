@@ -1,7 +1,9 @@
 package groupsvc
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/gin-gonic/gin"
@@ -9,6 +11,7 @@ import (
 	"github.com/remiges-tech/alya/router"
 	"github.com/remiges-tech/alya/service"
 	"github.com/remiges-tech/alya/wscutils"
+	"github.com/remiges-tech/idshield/types"
 	"github.com/remiges-tech/idshield/utils"
 	"github.com/remiges-tech/logharbour/logharbour"
 )
@@ -18,6 +21,19 @@ type group struct {
 	ShortName  string              `json:"shortName" validate:"required"`
 	LongName   string              `json:"longName" validate:"required"`
 	Attributes map[string][]string `json:"attr" validate:"required"`
+}
+
+type GroupResponse struct {
+	ID          *string              `json:"id,omitempty"`
+	Name        *string              `json:"name,omitempty"`
+	Path        *string              `json:"path,omitempty"`
+	SubGroups   *[]gocloak.Group     `json:"subGroups,omitempty"`
+	Attributes  *map[string][]string `json:"attributes,omitempty"`
+	Access      *map[string]bool     `json:"access,omitempty"`
+	ClientRoles *map[string][]string `json:"clientRoles,omitempty"`
+	RealmRoles  *[]string            `json:"realmRoles,omitempty"`
+	Nusers      int                  `json:"nusers,omitempty"`
+	CreatedAt   time.Time            `json:"createdat,omitempty"`
 }
 
 func Group_new(c *gin.Context, s *service.Service) {
@@ -30,7 +46,7 @@ func Group_new(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
 		return
 	}
-	r, err := utils.ExtractClaimFromToken(token, "iss")
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
 	if err != nil {
 		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
@@ -38,14 +54,14 @@ func Group_new(c *gin.Context, s *service.Service) {
 	}
 	parts := strings.Split(r, "/realms/")
 	realm := parts[1]
-	username, err := utils.ExtractClaimFromToken(token, "preferred_username")
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
 	if err != nil {
 		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
 		return
 	}
 
-	isCapable, _ := utils.Authz_check(utils.OpReq{
+	isCapable, _ := utils.Authz_check(types.OpReq{
 		User:      username,
 		CapNeeded: []string{"GroupCreate"},
 	}, false)
@@ -100,6 +116,86 @@ func Group_new(c *gin.Context, s *service.Service) {
 	l.Log("Finished execution of Group_new()")
 }
 
+// Group_get: handles the GET /groupget request, this will accept short group name if it exist will return single group
+func Group_get(c *gin.Context, s *service.Service) {
+	lh := s.LogHarbour
+	lh.Log("Group_get request received")
+	client := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+	var groupParams gocloak.GetGroupsParams
+
+	token, err := router.ExtractToken(c.GetHeader("Authorization")) // separate "Bearer_" word from token
+	lh.Log("token extracted from header")
+	if err != nil {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "token")}))
+		lh.Debug0().Log(fmt.Sprintf("token_missing: %v", map[string]any{"error": err.Error()}))
+		return
+	}
+
+	// retrive username from token for isCapable check
+	reqUserName, _ := utils.ExtractClaimFromJwt(token, "preferred_username")
+
+	// Authz_check():
+	isCapable, _ := utils.Authz_check(types.OpReq{User: reqUserName, CapNeeded: []string{"devloper", "admin"}}, false)
+	if !isCapable {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("User_not_authorized_to_perform_this_action", nil)}))
+		lh.Debug0().Log("User_not_authorized_to_perform_this_action")
+		return
+	}
+
+	realm, err := utils.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("invalid_token_payload", &realm)}))
+		lh.Debug0().Log(fmt.Sprintf("invalid token payload: %v", map[string]any{"error": err.Error()}))
+		return
+	}
+	split := strings.Split(realm, "/")
+	realm = split[len(split)-1]
+
+	lh.Log(fmt.Sprintf("Group_get realm parsed: %v", map[string]any{"realm": realm}))
+	if gocloak.NilOrEmpty(&realm) {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("realm_not_found", &realm)}))
+		lh.Debug0().Log(fmt.Sprintf("realm_not_found: %v", map[string]any{"realm": realm}))
+		return
+	}
+
+	shortName := c.Query("shortName")
+	if gocloak.NilOrEmpty(&shortName) {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "shortName")}))
+		lh.Debug0().Log("shortName missing")
+		return
+	}
+
+	// step 4: process the request
+	groupParams.Search = &shortName
+	groups, err := client.GetGroups(c, token, realm, groupParams)
+	lh.Log("GetGroups() request received")
+
+	if err != nil || len(groups) == 0 {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("group_not_found", &realm)}))
+		lh.Debug0().Log(fmt.Sprintf("group not found in given realm error: %v", map[string]any{"realm": realm}))
+		return
+	}
+
+	grpResp := GroupResponse{
+		ID:          groups[0].ID,
+		Name:        groups[0].Name,
+		SubGroups:   groups[0].SubGroups,
+		Attributes:  groups[0].Attributes,
+		Access:      groups[0].Access,
+		ClientRoles: groups[0].ClientRoles,
+		RealmRoles:  groups[0].RealmRoles,
+		// Path:        groups[0].Path,    // can add more if required
+		// CreatedAt:   time.Time{},
+	}
+
+	userCountGroup, _ := client.GetGroupMembers(c, token, realm, *groups[0].ID, groupParams)
+	grpResp.Nusers = len(userCountGroup)
+
+	// step 5: if there are no errors, send success response
+	lh.Log(fmt.Sprintf("Group found: %v", grpResp))
+	wscutils.SendSuccessResponse(c, wscutils.NewSuccessResponse(grpResp))
+}
+
 // HandleCreateUserRequest is for updating group capabilities.
 func Group_update(c *gin.Context, s *service.Service) {
 	l := s.LogHarbour
@@ -110,7 +206,7 @@ func Group_update(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrTokenMissing))
 		return
 	}
-	r, err := utils.ExtractClaimFromToken(token, "iss")
+	r, err := utils.ExtractClaimFromJwt(token, "iss")
 	if err != nil {
 		l.Debug0().LogDebug("Missing or incorrect realm:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
@@ -118,14 +214,14 @@ func Group_update(c *gin.Context, s *service.Service) {
 	}
 	parts := strings.Split(r, "/realms/")
 	realm := parts[1]
-	username, err := utils.ExtractClaimFromToken(token, "preferred_username")
+	username, err := utils.ExtractClaimFromJwt(token, "preferred_username")
 	if err != nil {
 		l.Debug0().LogDebug("Missing username:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUserNotFound))
 		return
 	}
 
-	isCapable, _ := utils.Authz_check(utils.OpReq{
+	isCapable, _ := utils.Authz_check(types.OpReq{
 		User:      username,
 		CapNeeded: []string{"GroupUpdate"},
 	}, false)
