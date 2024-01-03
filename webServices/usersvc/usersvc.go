@@ -20,13 +20,13 @@ import (
 )
 
 type user struct {
-	ID         string              `json:"id,omitempty"`
-	Username   string              `json:"username" validate:"required"`
-	Email      string              `json:"email" validate:"required,email"`
-	FirstName  string              `json:"firstName"`
-	LastName   string              `json:"lastName"`
-	Attributes map[string][]string `json:"attributes"`
-	Enabled    bool                `json:"enabled" validate:"required"`
+	ID         string            `json:"id,omitempty"`
+	Username   string            `json:"username" validate:"required"`
+	Email      string            `json:"email" validate:"required,email"`
+	FirstName  string            `json:"firstName,omitempty"`
+	LastName   string            `json:"lastName,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+	Enabled    bool              `json:"enabled" validate:"required"`
 }
 
 type UserListRequest struct {
@@ -96,8 +96,7 @@ func User_new(c *gin.Context, s *service.Service) {
 	var u user
 
 	// Unmarshal JSON request into user struct
-	err = wscutils.BindJSON(c, &u)
-	if err != nil {
+	if err = wscutils.BindJSON(c, &u); err != nil {
 		l.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
 		return
 	}
@@ -109,13 +108,17 @@ func User_new(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, validationErrors))
 		return
 	}
+	attr := make(map[string][]string)
+	for key, value := range u.Attributes {
+		attr[key] = []string{value}
+	}
 
 	keycloakUser := gocloak.User{
 		Username:   &u.Username,
 		FirstName:  &u.FirstName,
 		LastName:   &u.LastName,
 		Email:      &u.Email,
-		Attributes: &u.Attributes,
+		Attributes: &attr,
 		Enabled:    &u.Enabled,
 	}
 
@@ -130,28 +133,8 @@ func User_new(c *gin.Context, s *service.Service) {
 	ID, err := gcClient.CreateUser(c, token, realm, keycloakUser)
 	if err != nil {
 		l.LogActivity("Error while creating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		switch err.Error() {
-		case utils.ErrHTTPUnauthorized:
-			s.LogHarbour.Debug0().LogDebug("Unauthorized error occurred: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrUnauthorized))
-			return
-		case utils.ErrHTTPUserAlreadyExist:
-			s.LogHarbour.Debug0().LogDebug("User already exists error: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrAlreadyExist))
-			return
-		case utils.ErrHTTPRealmNotFound:
-			s.LogHarbour.Debug0().LogDebug("Realm not found error: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrRealmNotFound))
-			return
-		case utils.ErrHTTPSameEmail:
-			s.LogHarbour.Debug0().LogDebug("User exists with same email: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrSameEMail))
-			return
-		default:
-			s.LogHarbour.Debug0().LogDebug("Unknown error occurred: ", logharbour.DebugInfo{Variables: map[string]interface{}{"error": err}})
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(wscutils.ErrcodeUnknown))
-			return
-		}
+		utils.GocloakErrorHandler(c, l, err)
+		return
 	}
 
 	// Send success response
@@ -430,9 +413,14 @@ func User_activate(c *gin.Context, s *service.Service) {
 		users, err := gcClient.GetUsers(c, token, realm, gocloak.GetUsersParams{
 			Username: &u.Username,
 		})
-		if err != nil || len(users) < 1 {
-			l.Log("Error while getting user info")
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrWhileGettingInfo))
+		if err != nil {
+			utils.GocloakErrorHandler(c, l, err)
+			return
+		}
+		if len(users) == 0 {
+			l.Log("Error while gcClient.GetUsers username doesn't exist ")
+			str := "username"
+			wscutils.SendErrorResponse(c, wscutils.NewResponse("error", nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrNotExist, &str)}))
 			return
 		}
 		id := users[0].ID
@@ -450,8 +438,7 @@ func User_activate(c *gin.Context, s *service.Service) {
 	}
 	err = gcClient.UpdateUser(c, token, realm, keycloakUser)
 	if err != nil {
-		l.LogActivity("Error while activating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, &wscutils.Response{Status: "400", Data: err})
+		utils.GocloakErrorHandler(c, l, err)
 		return
 	}
 
@@ -521,9 +508,14 @@ func User_deactivate(c *gin.Context, s *service.Service) {
 		users, err := gcClient.GetUsers(c, token, realm, gocloak.GetUsersParams{
 			Username: &u.Username,
 		})
-		if err != nil || len(users) < 1 {
-			l.Log("Error while getting user info")
-			wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrWhileGettingInfo))
+		if err != nil {
+			utils.GocloakErrorHandler(c, l, err)
+			return
+		}
+		if len(users) == 0 {
+			l.Log("Error while gcClient.GetUsers username doesn't exist ")
+			str := "username"
+			wscutils.SendErrorResponse(c, wscutils.NewResponse("error", nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrNotExist, &str)}))
 			return
 		}
 		id := users[0].ID
@@ -541,8 +533,7 @@ func User_deactivate(c *gin.Context, s *service.Service) {
 	}
 	err = gcClient.UpdateUser(c, token, realm, keycloakUser)
 	if err != nil {
-		l.LogActivity("Error while activating user:", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, &wscutils.Response{Data: err})
+		utils.GocloakErrorHandler(c, l, err)
 		return
 	}
 
