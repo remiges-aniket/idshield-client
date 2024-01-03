@@ -27,3 +27,5 @@
 "operation_failed": 110
 "User_not_authorized_to_perform_this_action" : 111
 "invalid_token_payload": 112
+"exist": 113
+"not_exist": 114

@@ -20,7 +20,7 @@ type group struct {
 	ID         string              `json:"id,omitempty"`
 	ShortName  string              `json:"shortName" validate:"required"`
 	LongName   string              `json:"longName" validate:"required"`
-	Attributes map[string][]string `json:"attr" validate:"required"`
+	Attributes map[string]string `json:"attr" validate:"required"`
 }
 
 type GroupResponse struct {
@@ -93,12 +93,16 @@ func Group_new(c *gin.Context, s *service.Service) {
 		l.Log("Failed to convert the dependency to *gocloak.GoCloak")
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrFailedToLoadDependence))
 	}
+	attr := make(map[string][]string)
+	for key, value := range g.Attributes {
+		attr[key] = []string{value}
+	}
 
-	g.Attributes["longName"] = []string{g.LongName}
+	attr["longName"] = []string{g.LongName}
 
 	group := gocloak.Group{
 		Name:       &g.ShortName,
-		Attributes: &g.Attributes,
+		Attributes: &attr,
 	}
 
 	// Create a group
@@ -265,12 +269,17 @@ func Group_update(c *gin.Context, s *service.Service) {
 		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrWhileGettingInfo))
 		return
 	}
-	g.Attributes["longName"] = []string{g.LongName}
+	attr := make(map[string][]string)
+	for key, value := range g.Attributes {
+		attr[key] = []string{value}
+	}
+
+	attr["longName"] = []string{g.LongName}
 
 	UpdateGroupParm := gocloak.Group{
 		ID:         groups[0].ID,
 		Name:       &g.ShortName,
-		Attributes: &g.Attributes,
+		Attributes: &attr,
 	}
 	// UpdateGroup updates the given group by group name
 	err = gcClient.UpdateGroup(c, token, realm, UpdateGroupParm)
