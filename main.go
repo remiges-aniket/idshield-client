@@ -99,15 +99,17 @@ func main() {
 	// Service setup
 	s := service.NewService(r).WithDependency("gocloak", gcClient).WithLogHarbour(lh).WithDependency("realm", appConfig.Realm)
 
-	// Register a route for handling user creation requests
+	// Register a route for handling for user
 	s.RegisterRoute(http.MethodPost, "/usernew", usersvc.User_new)
+	s.RegisterRoute(http.MethodGet, "/userget", usersvc.User_get)
+	s.RegisterRoute(http.MethodGet, "/userlist", usersvc.User_list)
 	s.RegisterRoute(http.MethodPost, "/useractivate", usersvc.User_activate)
 	s.RegisterRoute(http.MethodPost, "/userdeactivate", usersvc.User_deactivate)
-	s.RegisterRoute(http.MethodPost, "/groupnew", groupsvc.Group_new)
-	s.RegisterRoute(http.MethodPost, "/groupupdate", groupsvc.Group_update)
 
-	s.RegisterRoute(http.MethodGet, "/userget", usersvc.User_get)
+	// Register a route for handling for group
+	s.RegisterRoute(http.MethodPost, "/groupnew", groupsvc.Group_new)
 	s.RegisterRoute(http.MethodGet, "/groupget", groupsvc.Group_get)
+	s.RegisterRoute(http.MethodPost, "/groupupdate", groupsvc.Group_update)
 
 	// Start the service
 	if err := r.Run(":" + appConfig.AppServerPort); err != nil {
