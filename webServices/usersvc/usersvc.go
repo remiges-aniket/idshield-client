@@ -29,6 +29,17 @@ type user struct {
 	Enabled    bool              `json:"enabled" validate:"required"`
 }
 
+// type userUpdateReq struct {
+// 	ID            *string `json:"id"`
+// 	Username      *string `json:"username" validate:"required"`
+// 	Email         *string `json:"email" validate:"required,email"`
+// 	FirstName     *string `json:"firstName"`
+// 	LastName      *string `json:"lastName"`
+// 	EmailVerified *bool   `json:"emailVerified,omitempty"`
+// 	Attributes    *string `json:"attributes"`
+// 	Enabled       *bool   `json:"enabled" validate:"required"`
+// }
+
 type UserListRequest struct {
 	Email         *string `json:"email,omitempty"`
 	FirstName     *string `json:"firstName,omitempty"`
@@ -49,7 +60,7 @@ type UserResponse struct {
 	EmailVerified *bool                `json:"emailVerified,omitempty"`
 	Enabled       *bool                `json:"enabled,omitempty" validate:"required"`
 	Attributes    *map[string][]string `json:"attributes,omitempty"`
-	CreatedAt     any                  `json:"createdat,omitempty"`
+	CreatedAt     time.Time            `json:"createdat,omitempty"`
 }
 
 type userActivity struct {
@@ -186,26 +197,18 @@ func User_list(c *gin.Context, s *service.Service) {
 	// Authz_check():
 	isCapable, _ := utils.Authz_check(types.OpReq{User: reqUserName, CapNeeded: []string{"devloper", "admin"}}, false)
 	if !isCapable {
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("User_not_authorized_to_perform_this_action", nil)}))
-		lh.Debug0().Log("User_not_authorized_to_perform_this_action")
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrUserNotAuthorized, nil)}))
+		lh.Debug0().Log(utils.ErrUserNotAuthorized)
 		return
 	}
 
-	realm, err := utils.ExtractClaimFromJwt(token, "iss")
-	if err != nil {
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("invalid_token_payload", &realm)}))
-		lh.Debug0().Log(fmt.Sprintf("invalid token payload: %v", map[string]any{"error": err.Error()}))
-		return
-	}
-	split := strings.Split(realm, "/")
-	realm = split[len(split)-1]
-
-	lh.Log(fmt.Sprintf("User_get realm parsed: %v", map[string]any{"realm": realm}))
+	realm := getRealmFromJwt(c, token)
 	if gocloak.NilOrEmpty(&realm) {
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("realm_not_found", &realm)}))
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrRealmNotFound, &realm)}))
 		lh.Debug0().Log(fmt.Sprintf("realm_not_found: %v", map[string]any{"realm": realm}))
 		return
 	}
+	lh.Log(fmt.Sprintf("User_update realm parsed: %v", map[string]any{"realm": realm}))
 
 	// step 4: process the request
 	users, err := client.GetUsers(c, token, realm, gocloak.GetUsersParams{
@@ -286,31 +289,24 @@ func User_get(c *gin.Context, s *service.Service) {
 	// Authz_check():
 	isCapable, _ := utils.Authz_check(types.OpReq{User: reqUserName, CapNeeded: []string{"devloper", "admin"}}, false)
 	if !isCapable {
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("User_not_authorized_to_perform_this_action", nil)}))
-		lh.Debug0().Log("User_not_authorized_to_perform_this_action")
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrUserNotAuthorized, nil)}))
+		lh.Debug0().Log(utils.ErrUserNotAuthorized)
 		return
 	}
 
-	realm, err := utils.ExtractClaimFromJwt(token, "iss")
-	if err != nil {
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("invalid_token_payload", &realm)}))
-		lh.Debug0().Log(fmt.Sprintf("invalid token payload: %v", map[string]any{"error": err.Error()}))
-		return
-	}
-	split := strings.Split(realm, "/")
-	realm = split[len(split)-1]
-
-	lh.Log(fmt.Sprintf("User_get realm parsed: %v", map[string]any{"realm": realm}))
+	realm := getRealmFromJwt(c, token)
 	if gocloak.NilOrEmpty(&realm) {
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("realm_not_found", &realm)}))
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrRealmNotFound, &realm)}))
 		lh.Debug0().Log(fmt.Sprintf("realm_not_found: %v", map[string]any{"realm": realm}))
 		return
 	}
+	lh.Log(fmt.Sprintf("User_update realm parsed: %v", map[string]any{"realm": realm}))
+
 	id := c.Query("id")
 	userName := c.Query("name")
 	if gocloak.NilOrEmpty(&id) && gocloak.NilOrEmpty(&userName) {
 		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "id", "name")}))
-		lh.Debug0().Log("id & name both are null")
+		lh.Debug0().Log(utils.ErrIDandUserNameMissing)
 		return
 	}
 
@@ -327,8 +323,14 @@ func User_get(c *gin.Context, s *service.Service) {
 	}
 
 	if err != nil || len(users) == 0 {
-		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("user_not_found", &realm, err.Error())}))
-		lh.Debug0().Log(fmt.Sprintf("user not found in given realm: %v", map[string]any{"realm": realm}))
+		switch err.Error() {
+		case utils.ErrHTTPUnauthorized:
+			wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeTokenVerificationFailed, &realm, err.Error())}))
+			lh.Debug0().Log(fmt.Sprintf("token expired error from keycloak: %v", map[string]any{"error": err.Error()}))
+		default:
+			wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrUserNotFound, &realm, err.Error())}))
+			lh.Debug0().Log(fmt.Sprintf("user not found in given realm: %v", map[string]any{"realm": realm, "error": err.Error()}))
+		}
 		return
 	}
 	user = users[0]
@@ -349,6 +351,83 @@ func User_get(c *gin.Context, s *service.Service) {
 	// step 5: if there are no errors, send success response
 	lh.Log(fmt.Sprintf("User found: %v", map[string]any{"user": userResp}))
 	wscutils.SendSuccessResponse(c, wscutils.NewSuccessResponse(userResp))
+}
+
+// User_update handles the PUT /user/update request
+func User_update(c *gin.Context, s *service.Service) {
+	lh := s.LogHarbour
+	lh.Log("User_update request received")
+	var gcUser *gocloak.User
+	var users []*gocloak.User
+
+	// step 1: bind request body to struct if not null
+	err := wscutils.BindJSON(c, &gcUser)
+	if err != nil {
+		lh.LogActivity("Error Unmarshalling JSON to struct:", logharbour.DebugInfo{Variables: map[string]any{"Error": err.Error()}})
+		return
+	}
+
+	if gocloak.NilOrEmpty(gcUser.ID) && gocloak.NilOrEmpty(gcUser.Username) {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "id", "username")}))
+		lh.Debug0().Log(utils.ErrIDandUserNameMissing)
+		return
+	}
+
+	client := s.Dependencies["gocloak"].(*gocloak.GoCloak)
+
+	token, err := router.ExtractToken(c.GetHeader("Authorization")) // separate "Bearer " word from token
+	if err != nil {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "token")}))
+		lh.Debug0().Log(fmt.Sprintf("token_missing: %v", map[string]any{"error": err.Error()}))
+		return
+	}
+	lh.Log("token extracted from header")
+
+	reqUserName, err := utils.ExtractClaimFromJwt(token, "preferred_username")
+	if err != nil {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeMissing, nil, "preferred_username")}))
+		lh.LogActivity("Error while extracting preferred_username from token:", logharbour.DebugInfo{Variables: map[string]any{"preferred_username": err.Error()}})
+		return
+	}
+	// Authz_check():
+	isCapable, _ := utils.Authz_check(types.OpReq{User: reqUserName, CapNeeded: []string{"devloper", "admin"}}, false)
+	if !isCapable {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrUserNotAuthorized, nil)}))
+		lh.Debug0().Log(utils.ErrUserNotAuthorized)
+		return
+	}
+
+	realm := getRealmFromJwt(c, token)
+	if gocloak.NilOrEmpty(&realm) {
+		wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(utils.ErrRealmNotFound, &realm)}))
+		lh.Debug0().Log(fmt.Sprintf("realm_not_found: %v", map[string]any{"realm": realm}))
+		return
+	}
+	lh.Log(fmt.Sprintf("User_update realm parsed: %v", map[string]any{"realm": realm}))
+
+	// step 4: process the request
+	if !gocloak.NilOrEmpty(gcUser.Username) {
+		exactMatch := true
+		users, _ = client.GetUsers(c, token, realm, gocloak.GetUsersParams{Exact: &exactMatch, Username: gcUser.Username})
+		if len(users) != 0 {
+			gcUser.ID = users[0].ID
+		}
+	}
+	err = client.UpdateUser(c, token, realm, *gcUser)
+	if err != nil {
+		switch err.Error() {
+		case "401 Unauthorized: HTTP 401 Unauthorized":
+			wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage(wscutils.ErrcodeTokenVerificationFailed, &realm, err.Error())}))
+			lh.Debug0().Log(fmt.Sprintf("token expired error from keycloak: %v", map[string]any{"error": err.Error()}))
+		default:
+			wscutils.SendErrorResponse(c, wscutils.NewResponse(wscutils.ErrorStatus, nil, []wscutils.ErrorMessage{wscutils.BuildErrorMessage("user_not_found", &realm)}))
+			lh.Debug0().Log(fmt.Sprintf("user not found in given realm: %v", map[string]any{"realm": realm, "error": err.Error()}))
+		}
+		return
+	}
+
+	// step 5: if there are no errors, send success response
+	wscutils.SendSuccessResponse(c, wscutils.NewSuccessResponse([]string{}))
 }
 
 func User_activate(c *gin.Context, s *service.Service) {
@@ -396,7 +475,7 @@ func User_activate(c *gin.Context, s *service.Service) {
 	err = u.CustomValidate()
 	if err != nil {
 		l.Debug0().LogDebug("either ID or Username is set, but not both", logharbour.DebugInfo{Variables: map[string]any{"error": err}})
-		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrEitherIDOrUsernameIsSetButNotBoth))
+		wscutils.SendErrorResponse(c, wscutils.NewErrorResponse(utils.ErrIDandUserNameMissing))
 		return
 	}
 
@@ -595,4 +674,14 @@ func (u *userActivity) CustomValidate() error {
 		return errors.New("either ID or Username must be set")
 	}
 	return nil
+}
+
+func getRealmFromJwt(c *gin.Context, token string) string {
+	realm, err := utils.ExtractClaimFromJwt(token, "iss")
+	if err != nil {
+		return ""
+	}
+	split := strings.Split(realm, "/")
+	realm = split[len(split)-1]
+	return realm
 }

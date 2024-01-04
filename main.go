@@ -102,6 +102,7 @@ func main() {
 	// Register a route for handling for user
 	s.RegisterRoute(http.MethodPost, "/usernew", usersvc.User_new)
 	s.RegisterRoute(http.MethodGet, "/userget", usersvc.User_get)
+	s.RegisterRoute(http.MethodPut, "/userupdate", usersvc.User_update)
 	s.RegisterRoute(http.MethodGet, "/userlist", usersvc.User_list)
 	s.RegisterRoute(http.MethodPost, "/useractivate", usersvc.User_activate)
 	s.RegisterRoute(http.MethodPost, "/userdeactivate", usersvc.User_deactivate)
