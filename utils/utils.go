@@ -32,10 +32,11 @@ const (
 	ErrHTTPUserNotFound     = "404 Not Found: User not found"
 	ErrHTTPSameEmail        = "409 Conflict: User exists with same email"
 
-	ErrFailedToLoadDependence            = "Failed_to_load_dependence"
-	ErrEitherIDOrUsernameIsSetButNotBoth = "either_ID_or_Username_is_set_but_not_both"
-	ERRTokenExpired                      = "token_expired"
-	ErrUserNotFound                      = "userName_not_found"
+	ErrFailedToLoadDependence = "Failed_to_load_dependence"
+	ErrIDandUserNameMissing   = "id_and_username_both_are_missing"
+	ERRTokenExpired           = "token_expired"
+	ErrUserNotFound           = "user_not_found"
+	ErrUserNotAuthorized      = "user_not_authorized_to_perform_this_action"
 )
 
 // ExtractClaimFromJwt: this will extract the provided singleClaimName as key from the jwt token and return its value as a string
